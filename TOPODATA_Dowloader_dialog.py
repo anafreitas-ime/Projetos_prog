@@ -23,6 +23,7 @@
 """
 
 import os
+import subprocess
 
 from qgis.PyQt import uic
 from qgis.PyQt import QtWidgets
@@ -74,19 +75,108 @@ class TOPODATADowloaderDialog(QtWidgets.QDialog, FORM_CLASS):
         obj_teste.download_raster_layer(quadricula + "ZN", progress_callback=self.progressBar.setValue)
 
     def botaoparaabrirmapaindice(self):
-            QgsMessageLog.logMessage("Mapa Índice aberto", "Plugin")
+        QgsMessageLog.logMessage("Abrindo seletor de quadrículas (Streamlit)", "Plugin")
 
-            caminho_imagem = os.path.join(os.path.dirname(__file__), "mapaindice.jpg")
+        # --- Versão antiga: abria a imagem estática mapaindice.jpg numa janela do QGIS ---
+        # caminho_imagem = os.path.join(os.path.dirname(__file__), "mapaindice.jpg")
+        #
+        # janela_mapa = QtWidgets.QDialog(self)
+        # janela_mapa.setWindowTitle("Mapa Índice - TOPODATA")
+        #
+        # label_imagem = QLabel()
+        # pixmap = QPixmap(caminho_imagem)
+        # label_imagem.setPixmap(pixmap)
+        #
+        # layout = QVBoxLayout()
+        # layout.addWidget(label_imagem)
+        # janela_mapa.setLayout(layout)
+        #
+        # janela_mapa.exec_()
 
-            janela_mapa = QtWidgets.QDialog(self)
-            janela_mapa.setWindowTitle("Mapa Índice - TOPODATA")
 
-            label_imagem = QLabel()
-            pixmap = QPixmap(caminho_imagem)
-            label_imagem.setPixmap(pixmap)
 
-            layout = QVBoxLayout()
-            layout.addWidget(label_imagem)
-            janela_mapa.setLayout(layout)
+        # --- Versão nova: abre o app Streamlit com o mapa interativo das quadrículas ---
+        # Isso substitui o que antes era feito manualmente no PowerShell:
+        #   cd st_app
+        #   pixi shell
+        #   streamlit run app_seletor_quadriculas.py
+        # O subprocess.Popen lá embaixo faz o papel desses três passos de uma
+        # vez, sem precisar abrir terminal nenhum.
 
-            janela_mapa.exec_()
+        # O ambiente Pixi foi criado dentro de st_app (não na raiz do plugin),
+        # então o .pixi também fica lá dentro.
+        pasta_plugin = os.path.dirname(__file__)
+        pasta_app = os.path.join(pasta_plugin, "st_app")
+
+        # Em vez de "ativar o ambiente" (o pixi shell) pra poder digitar só
+        # "streamlit", apontamos direto pro arquivo .exe dele — é como digitar
+        # o caminho completo do programa em vez do nome curto.
+        streamlit_exe = os.path.join(pasta_app, ".pixi", "envs", "default", "Scripts", "streamlit.exe")
+
+        # Caminho do nosso app — o mesmo argumento que iria depois de
+        # "streamlit run" no terminal.
+        script_app = os.path.join(pasta_app, "app_seletor_quadriculas.py")
+
+        # Confere se o Streamlit realmente está instalado nesse ambiente Pixi
+        # antes de tentar abrir; se não estiver, avisa o usuário em vez de
+        # falhar silenciosamente.
+        if not os.path.exists(streamlit_exe):
+            QgsMessageLog.logMessage(
+                f"Streamlit não encontrado em: {streamlit_exe}",
+                "Plugin",
+            )
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Ambiente Streamlit não encontrado",
+                "Não encontrei o ambiente Pixi com o Streamlit instalado.\n\n"
+                "Rode no PowerShell, dentro da pasta st_app:\n"
+                "pixi add python streamlit folium streamlit-folium requests",
+            )
+            return
+
+        # conferindo se o arquivo do app existe
+        if not os.path.exists(script_app):
+            QgsMessageLog.logMessage(
+                f"Script do Streamlit não encontrado em: {script_app}",
+                "Plugin",
+            )
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Arquivo não encontrado",
+                f"Não encontrei o app_seletor_quadriculas.py em:\n{pasta_app}",
+            )
+            return
+
+        # Manda a saída (e qualquer erro) para um arquivo de log, em vez de
+        # deixar só na janela de console que abre e fecha rápido demais pra ler.
+        # É o mesmo texto que apareceria no terminal se você tivesse rodado
+        # o comando manualmente (tipo "Local URL: http://localhost:8503").
+        log_path = os.path.join(pasta_app, "streamlit_log.txt")
+        log_file = open(log_path, "w", encoding="utf-8")
+
+        # O QGIS define PYTHONHOME/PYTHONPATH apontando pro próprio Python
+        # embutido. Se o processo novo herdar essas variáveis, o Python do
+        # ambiente Pixi tenta carregar a biblioteca padrão do QGIS por engano
+        # (causa o erro "SRE module mismatch"). Por isso tiramos as duas do
+        # ambiente antes de abrir o Streamlit, pra ele usar só o Pixi dele.
+        # Isso é um problema só porque quem está abrindo é o QGIS — no
+        # PowerShell normal (sem essas variáveis do QGIS) isso nunca acontece.
+        env_limpo = os.environ.copy()
+        env_limpo.pop("PYTHONHOME", None)
+        env_limpo.pop("PYTHONPATH", None)
+
+        # Aqui é onde o processo realmente é aberto — o equivalente a digitar
+        # "streamlit run app_seletor_quadriculas.py" no terminal, mas feito
+        # pelo próprio Python do plugin:
+        #   [streamlit_exe, "run", script_app] -> o comando e os argumentos
+        #   cwd=pasta_app                      -> equivalente ao "cd" pra st_app
+        #   stdout/stderr                      -> tudo que sairia na tela vai pro log
+        #   env=env_limpo                      -> ambiente sem o Python do QGIS
+        subprocess.Popen(
+            [streamlit_exe, "run", script_app],
+            cwd=pasta_app,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            env=env_limpo,
+        )
+        QgsMessageLog.logMessage(f"Log do Streamlit em: {log_path}", "Plugin")

@@ -24,7 +24,7 @@ class LayerLoader:
         QgsProject.instance().addMapLayer(layer)
         return layer
 
-    def download_multiple_raster_layers(self, file_names):
+    #def download_multiple_raster_layers(self, file_names):
         """Baixa e carrega várias camadas raster (TIF) de uma vez.
 
         file_names: lista com os nomes dos arquivos a baixar (a pasta de
